@@ -48,7 +48,7 @@ if __name__ == '__main__':
     logger.addHandler(ch)
     
     # memory limits
-    memory_limit = 4 * 1024
+    memory_limit = 16 * 1024
     logger.info(f"Setting memory limit to {memory_limit}MB")
     soft, hard = resource.getrlimit(resource.RLIMIT_AS) 
     resource.setrlimit(resource.RLIMIT_AS, (memory_limit * 1024 * 1024, memory_limit * 1024 * 1024)) 

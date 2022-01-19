@@ -100,7 +100,7 @@ class DecisionTreeClassifier:
                             X_transformed = pca.transform(X)
                             if X_transformed.shape == X.shape:
                                 datasets.append((X_transformed, pca, f"PCA over labelset {labelset}"))
-                        except numpy.linalg.LinAlgError:
+                        except np.linalg.LinAlgError:
                             print("observed error, ignoring result of PCA.")
         time_ds_end = time.time()
         #print(f"Time to compute datasets: {time_ds_end - time_ds_start}")
