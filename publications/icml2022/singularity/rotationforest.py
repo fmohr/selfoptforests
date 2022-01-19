@@ -24,17 +24,21 @@ class Node:
 
 class DecisionTreeClassifier:
     
-    def __init__(self, eta = 1, pi = 0.99, l = np.inf, p = None, rotation = True, rs = None):
+    def __init__(self, eta = 1, pi = 0.99, l = np.inf, p = None, rotation = True, rs = None, pca_classes = 2, project_before_select = False, enforce_projections = False, max_number_of_components_to_consider = 1, allow_global_projection = False):
         self.eta = eta
         self.pi = pi
         self.l = l
         self.p = p # the maximum number of (random) attributes to consider in each split. Specify None to use all
         self.rotation = rotation
-        self.pca_classes = 2
+        self.pca_classes = pca_classes
         self.max_class_combos = 1
         self.min_instances_for_rotation = 5
         self.min_score_to_not_rotate = 0.2
         self.rs = rs if rs is not None else np.random.RandomState()
+        self.project_before_select = project_before_select
+        self.enforce_projections = enforce_projections
+        self.max_number_of_components_to_consider = max_number_of_components_to_consider if max_number_of_components_to_consider is not None else 10**10
+        self.allow_global_projection = allow_global_projection
     
     def train(self, X, y):
         self.num_atts = X.shape[1]
@@ -80,43 +84,59 @@ class DecisionTreeClassifier:
         best_is_numeric_split = True
         X_decision = None
         
+        # define the indices of attributes over which the projection should take place and, partially, which attributes to use
+        if self.project_before_select:
+            indices_of_attributes_to_project_over = list(range(X.shape[1]))
+        else:
+            indices_of_attributes_to_project_over = list(range(X.shape[1]))
+            if self.p is not None:
+                num_new_features = min(X.shape[1], int(self.p), self.max_number_of_components_to_consider)
+                indices_of_attributes_to_project_over = sorted(self.rs.choice(indices_of_attributes_to_project_over, num_new_features, replace=False))
+        X_for_projection = X[:,indices_of_attributes_to_project_over]
+        
+        
         # compute dataset modifications that may be considered for splits
         time_ds_start = time.time()
-        datasets = [(X, None, "None")]
+        datasets = []
+        if not self.enforce_projections:
+            datasets.append((X, None, "None"))
         if self.rotation and X.shape[0] > self.min_instances_for_rotation:
             
             # one PCA to the full data
-            #pca = sklearn.decomposition.PCA()
-            #datasets.append((pca.fit_transform(X_scaled), pca))
+            if self.allow_global_projection:
+                pca = sklearn.decomposition.PCA()
+                datasets.append((pca.fit_transform(X_for_projection)[:,:self.max_number_of_components_to_consider], pca, "global pca"))
             
             # one PCA to the data reduced to each class
             for k in range(1, self.max_class_combos + 1):
                 for labelset in it.combinations([self.labels[l] for l in label_order[-self.pca_classes:]], k):#label_order:#[-self.pca_classes:]:
                     pca = sklearn.decomposition.PCA()
-                    instances_for_label = X[[l in labelset for l in y]]
+                    instances_for_label = X_for_projection[[l in labelset for l in y]]
                     if len(instances_for_label) >= self.min_instances_for_rotation and np.var(instances_for_label) > 0:
                         try:
                             pca.fit(instances_for_label)
-                            X_transformed = pca.transform(X)
-                            if X_transformed.shape == X.shape:
+                            X_transformed = pca.transform(X_for_projection)[:,:self.max_number_of_components_to_consider]
+                            if X_transformed.shape == X_for_projection.shape:
                                 datasets.append((X_transformed, pca, f"PCA over labelset {labelset}"))
                         except np.linalg.LinAlgError:
                             print("observed error, ignoring result of PCA.")
         time_ds_end = time.time()
         #print(f"Time to compute datasets: {time_ds_end - time_ds_start}")
-        
-        # get the attributes over which the split might be defined
-        indices_of_considered_attributes = list(range(X.shape[1]))
-        if self.p is not None:
-            num_new_features = min(len(indices_of_considered_attributes), int(self.p))
-            indices_of_considered_attributes = sorted(self.rs.choice(indices_of_considered_attributes, num_new_features, replace=False))
+            
         
         #print(f"Now considering {len(datasets)} datasets")
         att_cnt = 0
         for ds_index, (X_local, transformation, trans_name) in enumerate(datasets):
             
+            # if attributes were NOT selected BEFORE projection, select them now
+            indices_of_possible_split_attributes = list(range(min(X_local.shape[1], self.max_number_of_components_to_consider)))
+            if self.project_before_select:
+                if self.p is not None:
+                    num_new_features = min(len(indices_of_possible_split_attributes), int(self.p))
+                    indices_of_possible_split_attributes = sorted(self.rs.choice(indices_of_possible_split_attributes, num_new_features, replace=False))
+            
             # get the split decision
-            for att_index in indices_of_considered_attributes:
+            for att_index in indices_of_possible_split_attributes:
                 att_cnt += 1
                 col = X_local[:, att_index]
                 numeric_split = col.dtype in [float, int]
@@ -147,6 +167,7 @@ class DecisionTreeClassifier:
         mask = X_decision[:,split_point[0]] <= split_point[1] if best_is_numeric_split else X_decision[:,split_point[0]] == split_point[1]
         node = Node()
         node.split_point = split_point
+        node.indices_of_attributes_to_project_over = indices_of_attributes_to_project_over
         if transformation_for_decision is None:
             node.transformation_vector = None 
             node.offset = None
@@ -233,7 +254,10 @@ class DecisionTreeClassifier:
             return node
         att, v = node.split_point
         if node.is_numeric:
-            val1 = x[att] if node.transformation_vector is None else node.transformer.transform([x])[0][att] #np.dot(node.transformation_vector, x)            
+            if node.transformation_vector is None:
+                val1 = x[att]
+            else:
+                val1 = node.transformer.transform([x[node.indices_of_attributes_to_project_over]])[0][att]
             #val2 = x[att] if node.transformation_vector is None else np.dot(node.transformation_vector, x)
             #print(val1, val2)
             val = val1
@@ -257,13 +281,17 @@ class DecisionTreeClassifier:
     
 class RandomForest:
     
-    def __init__(self, n_trees = 100, pi = 0.9, eta = 5, p = None, rotation = False, rs = None):
+    def __init__(self, n_trees = 100, pi = 0.9, eta = 5, p = None, rotation = False, pca_classes = 2, allow_global_projection = True, project_before_select = False, max_number_of_components_to_consider = None, rs = None):
         self.n_trees = n_trees
         self.pi = pi
         self.eta = eta
         self.p = p
         self.rotation = rotation
         self.rs = rs if rs is not None else np.random.RandomState()
+        self.project_before_select = project_before_select
+        self.pca_classes = pca_classes
+        self.allow_global_projection = allow_global_projection
+        self.max_number_of_components_to_consider = max_number_of_components_to_consider
     
     def train(self, X, y):
         self.labels = list(np.unique(y))
@@ -274,7 +302,7 @@ class RandomForest:
             indices = self.rs.choice(num_instances, num_instances)
             Xi = np.array([X[j] for j in indices])
             yi = np.array([y[j] for j in indices])
-            dt = DecisionTreeClassifier(pi = self.pi, eta = self.eta, p = p, rotation = self.rotation, rs = self.rs)
+            dt = DecisionTreeClassifier(pi = self.pi, eta = self.eta, p = p, rotation = self.rotation, rs = self.rs, project_before_select = self.project_before_select, allow_global_projection = self.allow_global_projection, pca_classes = self.pca_classes, max_number_of_components_to_consider = self.max_number_of_components_to_consider)
             dt.train(Xi, yi)
             self.trees.append(dt)
     

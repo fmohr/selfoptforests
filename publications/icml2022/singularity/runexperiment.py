@@ -17,7 +17,7 @@ from rotationforest import RandomForest
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset_id', type=int, required=True)
-    parser.add_argument('--algorithm', type=str, choices=['randomforest', 'rotationforest', 'pcaforest'], required=True)
+    parser.add_argument('--algorithm', type=str, choices=['randomforest', 'rotationforest', 'pcaforest', 'zhangpcaforest', 'wangpcaforest'], required=True)
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--folder', type=str, default='./tmp/')
     return parser.parse_args()
@@ -28,7 +28,11 @@ def get_learner(args):
     if learner_name == "randomforest":
         return RandomForest(n_trees = num_trees, rotation = False, rs = np.random.RandomState(args.seed))
     if learner_name == "pcaforest":
-        return RandomForest(n_trees = num_trees, rotation = True, rs = np.random.RandomState(args.seed))
+        return RandomForest(n_trees = num_trees, rotation = True, project_before_select = True, allow_global_projection = True, pca_classes = 2, max_number_of_components_to_consider = None, rs = np.random.RandomState(args.seed))
+    if learner_name == "zhangpcaforest":
+        return RandomForest(n_trees = num_trees, rotation = True, project_before_select = False, allow_global_projection = True, pca_classes = 0, max_number_of_components_to_consider = None, rs = np.random.RandomState(args.seed))
+    if learner_name == "wangpcaforest":
+        return RandomForest(n_trees = num_trees, rotation = True, project_before_select = False, allow_global_projection = True, pca_classes = 0, max_number_of_components_to_consider = 1, rs = np.random.RandomState(args.seed))
 
 if __name__ == '__main__':
     
@@ -75,13 +79,16 @@ if __name__ == '__main__':
     time_train_start = time.time()
     learner.train(X_train, y_train)
     time_train_end = time.time()
-    y_hat = learner.predict(X_test)
+    y_hat_train = learner.predict(X_train)
+    y_hat_test = learner.predict(X_test)
     time_predict_end = time.time()
-    acc = sklearn.metrics.accuracy_score(y_test, y_hat)
+    acc_train = sklearn.metrics.accuracy_score(y_train, y_hat_train)
+    acc_test = sklearn.metrics.accuracy_score(y_test, y_hat_test)
     
     # serialize results
     results = {
-        "accuracy": acc,
+        "accuracy_train": acc_train,
+        "accuracy_test": acc_test,
         "traintime":  int(1000 * (time_train_end - time_train_start)),
         "testtime":  int(1000 * (time_predict_end - time_train_end)),
         "depths": list(learner.get_depths()),
