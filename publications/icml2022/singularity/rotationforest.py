@@ -39,6 +39,7 @@ class DecisionTreeClassifier:
     def train(self, X, y):
         self.num_atts = X.shape[1]
         self.labels = list(np.unique(y))
+        self.majority_label = self.labels[np.argmax([np.count_nonzero(self.labels == l) for l in self.labels])]
         
         # scale data
         if self.rotation:
@@ -55,6 +56,12 @@ class DecisionTreeClassifier:
         
         # preliminaries (lines 1-3)
         n = X.shape[0]
+        if n <= 0:
+            print("Warning: empty node!")
+            n = Node()
+            n.label = self.majority_label
+            return n
+        
         n_unique = len({tuple(row) for row in X})
         ni = [np.count_nonzero(y == l) for l in self.labels]
         majority_label = np.argmax(ni)
@@ -93,7 +100,7 @@ class DecisionTreeClassifier:
                             X_transformed = pca.transform(X)
                             if X_transformed.shape == X.shape:
                                 datasets.append((X_transformed, pca, f"PCA over labelset {labelset}"))
-                        except LinAlgError:
+                        except numpy.linalg.LinAlgError:
                             print("observed error, ignoring result of PCA.")
         time_ds_end = time.time()
         #print(f"Time to compute datasets: {time_ds_end - time_ds_start}")

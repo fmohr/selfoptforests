@@ -30,10 +30,10 @@ def get_dataset(openmlid):
     expansion_size = 1
     for att in categorical_attributes:
         expansion_size *= (len(pd.unique(df[att])) - 1)
-        if expansion_size > 10**5:
+        if expansion_size > 10**6:
             break
     
-    if expansion_size < 10**5:
+    if expansion_size < 10**6:
         X = pd.get_dummies(df[[c for c in df.columns if c != ds.default_target_attribute]], drop_first=True).values.astype(float)
     else:
         print("creating SPARSE data")
