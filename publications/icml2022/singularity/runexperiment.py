@@ -17,7 +17,7 @@ from rotationforest import RandomForest
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset_id', type=int, required=True)
-    parser.add_argument('--algorithm', type=str, choices=['randomforest', 'rotationforest', 'pcaforest', 'zhangpcaforest', 'wangpcaforest'], required=True)
+    parser.add_argument('--algorithm', type=str, choices=['randomforest', 'rotationforest', 'ldaforest', 'pcaforest', 'zhangpcaforest', 'zhangldaforest', 'wangpcaforest'], required=True)
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--folder', type=str, default='./tmp/')
     return parser.parse_args()
@@ -26,13 +26,17 @@ def get_learner(args):
     num_trees = 100
     learner_name = args.algorithm
     if learner_name == "randomforest":
-        return RandomForest(n_trees = num_trees, rotation = False, rs = np.random.RandomState(args.seed))
+        return RandomForest(n_trees = num_trees, enable_pca_projections = False, enable_lda_projections = False, rs = np.random.RandomState(args.seed))
     if learner_name == "pcaforest":
-        return RandomForest(n_trees = num_trees, rotation = True, project_before_select = True, allow_global_projection = True, pca_classes = 2, max_number_of_components_to_consider = None, rs = np.random.RandomState(args.seed))
+        return RandomForest(n_trees = num_trees, enable_pca_projections = True, enable_lda_projections = False, project_before_select = True, allow_global_projection = True, pca_classes = 0, max_number_of_components_to_consider = None, light_weight_split_point = True, rs = np.random.RandomState(args.seed))
+    if learner_name == "ldaforest":
+        return RandomForest(n_trees = num_trees, enable_pca_projections = False, enable_lda_projections = True, project_before_select = False, allow_global_projection = False, enforce_projections = True, max_number_of_components_to_consider = 5, light_weight_split_point = True, rs = np.random.RandomState(args.seed))
+    if learner_name == "zhangldaforest":
+        return RandomForest(n_trees = num_trees, enable_pca_projections = False, enable_lda_projections = True, project_before_select = False, allow_global_projection = False, enforce_projections = True, max_number_of_components_to_consider = None, light_weight_split_point = False, rs = np.random.RandomState(args.seed))
     if learner_name == "zhangpcaforest":
-        return RandomForest(n_trees = num_trees, rotation = True, project_before_select = False, allow_global_projection = True, pca_classes = 0, max_number_of_components_to_consider = None, rs = np.random.RandomState(args.seed))
+        return RandomForest(n_trees = num_trees, enable_pca_projections = True, enable_lda_projections = False, project_before_select = False, allow_global_projection = True, pca_classes = 0, max_number_of_components_to_consider = None, light_weight_split_point = False, rs = np.random.RandomState(args.seed))
     if learner_name == "wangpcaforest":
-        return RandomForest(n_trees = num_trees, rotation = True, project_before_select = False, allow_global_projection = True, pca_classes = 0, max_number_of_components_to_consider = 1, rs = np.random.RandomState(args.seed))
+        return RandomForest(n_trees = num_trees, enable_pca_projections = True, enable_lda_projections = False, project_before_select = False, allow_global_projection = True, pca_classes = 0, max_number_of_components_to_consider = 1, light_weight_split_point = False, rs = np.random.RandomState(args.seed))
 
 if __name__ == '__main__':
     
