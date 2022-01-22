@@ -5,6 +5,16 @@ import sklearn.decomposition
 import sklearn.discriminant_analysis
 from tqdm import tqdm
 import time
+#from bayes_opt import BayesianOptimization
+
+def plot_dataset(X, y):
+    fig, ax = plt.subplots()
+    labels = list(np.unique(y))
+    if X.shape[1] == 1:
+        X = np.column_stack([X, np.linspace(0, 1, X.shape[0])])
+    for label in labels:
+        ax.scatter(X[y == label,0], X[y == label,1], s=5)
+    return fig, ax
 
 def entropy(p):
     return -sum([q * np.log(q) / np.log(2) if q > 0 else 0 for q in p])
@@ -30,11 +40,11 @@ class Projection:
         self.vec = vec
     
     def transform(self, X):
-        return np.array([np.dot(X, self.vec)]).T
+        return np.array([np.dot(self.vec, x) for x in X])
     
 class DecisionTreeClassifier:
     
-    def __init__(self, eta = 1, pi = 0.99, l = np.inf, p = None, enable_pca_projections = True, enable_lda_projections = True, rs = None, pca_classes = 2, project_before_select = False, enforce_projections = False, max_number_of_components_to_consider = 1, allow_global_projection = False, light_weight_split_point = False):
+    def __init__(self, eta = 1, pi = 0.99, l = np.inf, p = None, enable_pca_projections = True, enable_lda_projections = True, rs = None, pca_classes = 2, project_before_select = False, enforce_projections = False, max_number_of_components_to_consider = 1, allow_global_projection = False, light_weight_split_point = False, lda_on_canonical_projection = False, granularity = 10, beam = None):
         self.eta = eta
         self.pi = pi
         self.l = l
@@ -50,8 +60,11 @@ class DecisionTreeClassifier:
         self.allow_global_projection = allow_global_projection
         self.enable_pca_projections = enable_pca_projections
         self.enable_lda_projections = enable_lda_projections
+        self.lda_on_canonical_projection = lda_on_canonical_projection
         self.rotation = self.enable_pca_projections or self.enable_lda_projections
         self.light_weight_split_point = light_weight_split_point
+        self.granularity = granularity
+        self.beam = beam
         
         # train time stats
         self.time_projections = 0
@@ -113,7 +126,7 @@ class DecisionTreeClassifier:
         else:
             indices_of_attributes_to_project_over = list(range(X.shape[1]))
             if self.p is not None:
-                num_new_features = min(X.shape[1], int(self.p), self.max_number_of_components_to_consider)
+                num_new_features = min(X.shape[1], max(2, int(self.p)), self.max_number_of_components_to_consider)
                 indices_of_attributes_to_project_over = sorted(self.rs.choice(indices_of_attributes_to_project_over, num_new_features, replace=False))
         X_for_projection = X[:,indices_of_attributes_to_project_over]
         
@@ -126,20 +139,30 @@ class DecisionTreeClassifier:
             
             # lda projections
             if self.enable_lda_projections:
-                lda = sklearn.discriminant_analysis.LinearDiscriminantAnalysis()
+                n_components = min(self.max_number_of_components_to_consider, X_for_projection.shape[1], len(np.unique(y)) - 1)
+                lda = sklearn.discriminant_analysis.LinearDiscriminantAnalysis(n_components = n_components)
                 try:
                     lda.fit(X_for_projection, y)
-                    accepted_labels = [self.labels[l] for l in label_order[-self.max_number_of_components_to_consider:]]
-                    for label, direction in zip(lda.classes_, lda.coef_):
-                        if label not in accepted_labels:
-                            continue
+                    
+                    if self.lda_on_canonical_projection:
+                        
+                            X_projected = lda.transform(X_for_projection)
+                            datasets.append((X_projected, lda, f"LDA class projection", None))
+                    
+                    else:
+                    
+                        accepted_labels = [self.labels[l] for l in label_order[-self.max_number_of_components_to_consider:] if self.labels[l] in y]
+                        for label, direction in zip(lda.classes_, lda.coef_):
+                            if label not in accepted_labels:
+                                continue
+
+                            projection = Projection(direction)
+                            X_projected = projection.transform(X_for_projection).reshape((X_for_projection.shape[0], 1))
                             
-                        projection = Projection(direction)
-                        X_projected = projection.transform(X_for_projection)
-                        #means = np.array([np.mean(X_projected[(y == label) == p]) for p in [True, False]])
-                        #offsets_min = np.array([min(means)])
-                        #offsets_max = np.array([max(means)])
-                        datasets.append((X_projected, projection, f"LDA", None))
+                            #means = np.array([np.mean(X_projected[(y == label) == p]) for p in [True, False]])
+                            #offsets_min = np.array([min(means)])
+                            #offsets_max = np.array([max(means)])
+                            datasets.append((X_projected, projection, f"LDA subspace projection", None))
                 except:
                     print("Observed error in LDA, ignoring this dimension")
                 
@@ -168,9 +191,19 @@ class DecisionTreeClassifier:
         self.time_projections += (time_ds_end - time_ds_start)
         #print(f"Time to compute datasets: {time_ds_end - time_ds_start}")
         
+        # if there are no datasets, just run normal split
+        if len(datasets) == 0:
+            print("No dataset, falling back to standard.")
+            datasets.append((X, None, "None", None))
+        
         #print(f"Now considering {len(datasets)} datasets")
         att_cnt = 0
         for ds_index, (X_local, transformation, trans_name, offsets) in enumerate(datasets):
+            
+            # plot dataset
+            #fig, ax = plot_dataset(X_local, y)
+            #ax.set_title(trans_name)
+            #fig.show()
             
             # if attributes were NOT selected BEFORE projection, select them now
             indices_of_possible_split_attributes = list(range(min(X_local.shape[1], self.max_number_of_components_to_consider)))
@@ -190,7 +223,7 @@ class DecisionTreeClassifier:
                     # get offsets
                     offset_min = -np.inf if offsets is None else offsets[0][att_index]
                     offset_max = np.inf if offsets is None else offsets[1][att_index]
-                    v, score = self.evaluate_numeric_attribute(col, y, min_offset = offset_min, max_offset = offset_max)
+                    v, score = self.evaluate_numeric_attribute(col, y, best_score, min_offset = offset_min, max_offset = offset_max)
                 else:
                     v, score = self.evaluate_categorical_attribute(col, y)
                 if v is not None and score > best_score:
@@ -230,7 +263,7 @@ class DecisionTreeClassifier:
         node.rc = self.train_tree(X[~mask], y[~mask])
         return node
     
-    def evaluate_numeric_attribute(self, col, y, min_offset = -np.inf, max_offset = np.inf):
+    def evaluate_numeric_attribute(self, col, y, score_to_beat, min_offset = -np.inf, max_offset = np.inf):
         
         indices = np.argsort(col)
         M = []
@@ -284,7 +317,7 @@ class DecisionTreeClassifier:
                     score = get_score_of_point(v)
                     if score > best_score:
                         best_v, best_score = v, score
-                return best_v, best_score
+                return best_v, best_score, len(points)
             
             # otherwise get the most promising bin based on a random sample
             bins = np.array_split(points, num_splits)
@@ -296,17 +329,114 @@ class DecisionTreeClassifier:
                 if score > best_bin_score:
                     best_bin_score = score
                     best_bin = b
-            return get_best_in_bin(best_bin, num_splits)
+            best_v, best_score, num_evals = get_best_in_bin(best_bin, num_splits)
+            return best_v, best_score, num_evals + len(bins)
+        
+        def get_best_from_beams(points, num_samples, reach, best_sample_point_list):
+            
+            #if len(points) < min(num_samples * 2 * reach, 100):
+             #   best_v, best_score = None, -np.inf
+              #  for v in points:
+               #     score = get_score_of_point(v)
+                #    if score > best_score:
+                 #       best_v, best_score = v, score
+                #return best_v, best_score, len(points)
+            
+            # otherwise get the most promising bin based on a random sample
+            bins = np.array_split(points, num_samples)
+            best_prev_sample_point = best_sample_point_list[0]
+            best_bin = best_prev_sample_point[0]
+            best_bin_score = best_prev_sample_point[1]
+            sample_points = []
+            best_bin_index = -1
+            for i, b in enumerate(bins):
+                sample_point = b[int(len(b)/2)]
+                sample_points.append(sample_point)
+                score = get_score_of_point(sample_point)
+                if score > best_bin_score:
+                    best_bin_score = score
+                    best_bin = b
+                    best_bin_index = i
+                    best_sample_point_list[0] = (sample_point, score)
+            if best_bin_index < 0:
+                return
+            lower_index = max(0, best_bin_index - reach)
+            upper_index = min(best_bin_index + reach, len(sample_points) - 1)
+            new_beam = [p for p in points if p >= sample_points[lower_index] and p <= sample_points[upper_index]]
+            if len (new_beam) < 10:
+                return
+            get_best_from_beams(new_beam, num_samples, reach, best_sample_point_list)
             
             
-        if self.light_weight_split_point and len(M) > 100:
-            return get_best_in_bin(M, 10)
+        num_splits = self.granularity
+        if self.light_weight_split_point and len(M) > num_splits:
+            #best_v, best_score, num_evals = get_best_in_bin(M, 10)
+            
+            if False and len(M) >= 1000: #BO approach
+                
+                # Bounded region of parameter space
+                pbounds = {'x': (0, len(M) - 1)}
+
+                optimizer = BayesianOptimization(
+                    f=lambda x: get_score_of_point(M[int(x)]),
+                    pbounds=pbounds,
+                    random_state=self.rs,
+                )
+                optimizer.maximize(
+                    init_points=10,
+                    n_iter=10,
+                )
+                best_v = M[int(optimizer.max["params"]["x"])]
+                best_score = optimizer.max["target"]
+                return best_v, best_score
+                
+            
+            elif self.beam:
+                reach = self.beam
+                best = [(None, -np.inf)]
+                get_best_from_beams(M, num_splits, reach, best)
+                return best[0][0], best[0][1]
+            
+            elif False:
+                return tuple(get_best_in_bin(M, num_splits)[:2])
+            
+            else:
+                
+                # create info about splits
+                time_start_light = time.time()
+                bins = np.array_split(M, num_splits)
+                bin_scores = []
+                for i, b in enumerate(bins):
+                    sample_point = b[int(len(b)/2)]
+                    score = get_score_of_point(sample_point)
+                    if score > best_score:
+                        best_score = score
+                        best_v = sample_point
+                time_end_light = time.time()
+                return best_v, best_score
         
         else:
+            scores = []
+            time_start_full = time.time()
             for v in M:
                 score = get_score_of_point(v)
+                scores.append(score)
                 if score > best_score:
                     best_v, best_score = v, score
+            time_end_full = time.time()
+            
+            if False:
+                
+                #print(f"Plotting results. Best val {best_v} with score {best_score} and best solution found within {num_evals} iterations. Best BO solutions: {optimizer.max}. Gap of BO solution: {np.round(np.abs(best_score - optimizer.max['target']), 3)}. Full runtime: {np.round(time_end_bo - time_start_bo, 2)}, BO runtime: {np.round(time_end_bo - time_start_bo, 3)}, Full search runtime: {np.round(time_end_full - time_start_full, 3)}. Runtime light: {np.round(time_end_light - time_start_light, 3)}. Gap light: {np.round(np.abs(best_score - best_mega_greedy_score), 3)}")
+                fig, (ax1, ax2) = plt.subplots(1,2, figsize=(10, 4))
+                ax1.plot(scores)
+                #ax1.scatter(bin_scores[:,0], bin_scores[:,1], color="C1")
+                #ax2.plot(M, scores)
+                #ax2.scatter(best_v_greedy_search, best_score_greedy_search,  color="C1")
+                #ax2.scatter(best_v, best_score, color="C2")
+                #ax2.axhline(best_, linestyle="--")
+                plt.show()
+            
             return best_v, best_score
     
 
@@ -347,7 +477,9 @@ class DecisionTreeClassifier:
             if node.transformer is None:
                 val1 = x[att]
             else:
-                val1 = node.transformer.transform([x[node.indices_of_attributes_to_project_over]])[0][att]
+                x_transformed = node.transformer.transform([x[node.indices_of_attributes_to_project_over]])[0]
+                #print(x_transformed)
+                val1 = x_transformed[att]
             #val2 = x[att] if node.transformation_vector is None else np.dot(node.transformation_vector, x)
             #print(val1, val2)
             val = val1
@@ -371,13 +503,14 @@ class DecisionTreeClassifier:
     
 class RandomForest:
     
-    def __init__(self, n_trees = 100, pi = 0.9, eta = 5, p = None, enable_pca_projections = False, enable_lda_projections = False, pca_classes = 2, allow_global_projection = True, project_before_select = False, max_number_of_components_to_consider = None, enforce_projections = False, light_weight_split_point = False, rs = None):
+    def __init__(self, n_trees = 100, pi = 0.9, eta = 5, p = None, enable_pca_projections = False, enable_lda_projections = False, lda_on_canonical_projection = False, pca_classes = 2, allow_global_projection = True, project_before_select = False, max_number_of_components_to_consider = None, enforce_projections = False, light_weight_split_point = False, granularity = 10, beam = None, rs = None):
         self.n_trees = n_trees
         self.pi = pi
         self.eta = eta
         self.p = p
         self.enable_pca_projections = enable_pca_projections
         self.enable_lda_projections = enable_lda_projections
+        self.lda_on_canonical_projection = lda_on_canonical_projection
         self.rs = rs if rs is not None else np.random.RandomState()
         self.project_before_select = project_before_select
         self.pca_classes = pca_classes
@@ -385,6 +518,8 @@ class RandomForest:
         self.max_number_of_components_to_consider = max_number_of_components_to_consider
         self.enforce_projections = enforce_projections
         self.light_weight_split_point = light_weight_split_point
+        self.granularity = granularity
+        self.beam = beam
     
     def train(self, X, y):
         self.labels = list(np.unique(y))
@@ -395,7 +530,7 @@ class RandomForest:
             indices = self.rs.choice(num_instances, num_instances)
             Xi = np.array([X[j] for j in indices])
             yi = np.array([y[j] for j in indices])
-            dt = DecisionTreeClassifier(pi = self.pi, eta = self.eta, p = p, enable_pca_projections = self.enable_pca_projections, enable_lda_projections = self.enable_lda_projections, rs = self.rs, project_before_select = self.project_before_select, allow_global_projection = self.allow_global_projection, pca_classes = self.pca_classes, max_number_of_components_to_consider = self.max_number_of_components_to_consider, enforce_projections = self.enforce_projections, light_weight_split_point = self.light_weight_split_point)
+            dt = DecisionTreeClassifier(pi = self.pi, eta = self.eta, p = p, enable_pca_projections = self.enable_pca_projections, enable_lda_projections = self.enable_lda_projections, lda_on_canonical_projection = self.lda_on_canonical_projection, rs = self.rs, project_before_select = self.project_before_select, allow_global_projection = self.allow_global_projection, pca_classes = self.pca_classes, max_number_of_components_to_consider = self.max_number_of_components_to_consider, enforce_projections = self.enforce_projections, light_weight_split_point = self.light_weight_split_point, granularity = self.granularity, beam = self.beam)
             dt.train(Xi, yi)
             self.trees.append(dt)
     
