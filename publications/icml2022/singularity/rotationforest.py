@@ -44,7 +44,7 @@ class Projection:
     
 class DecisionTreeClassifier:
     
-    def __init__(self, eta = 1, pi = 0.99, l = np.inf, p = None, enable_pca_projections = True, enable_lda_projections = True, rs = None, pca_classes = 2, project_before_select = False, enforce_projections = False, max_number_of_components_to_consider = 1, allow_global_projection = False, light_weight_split_point = False, lda_on_canonical_projection = False, granularity = 10, beam = None):
+    def __init__(self, eta = 1, pi = 0.99, l = np.inf, p = None, enable_pca_projections = True, enable_lda_projections = True, rs = None, pca_classes = 2, project_before_select = False, enforce_projections = False, max_number_of_components_to_consider = 1, allow_global_projection = False, light_weight_split_point = False, lda_on_canonical_projection = False, granularity = 10, beam = None, adjust_lda_via_pca = False):
         self.eta = eta
         self.pi = pi
         self.l = l
@@ -65,6 +65,7 @@ class DecisionTreeClassifier:
         self.light_weight_split_point = light_weight_split_point
         self.granularity = granularity
         self.beam = beam
+        self.adjust_lda_via_pca = adjust_lda_via_pca
         
         # train time stats
         self.time_projections = 0
@@ -142,15 +143,22 @@ class DecisionTreeClassifier:
                 n_components = min(self.max_number_of_components_to_consider, X_for_projection.shape[1], len(np.unique(y)) - 1)
                 lda = sklearn.discriminant_analysis.LinearDiscriminantAnalysis(n_components = n_components)
                 try:
-                    lda.fit(X_for_projection, y)
                     
                     if self.lda_on_canonical_projection:
-                        
-                            X_projected = lda.transform(X_for_projection)
-                            datasets.append((X_projected, lda, f"LDA class projection", None))
+                            if self.adjust_lda_via_pca and X_for_projection.shape[0] < X_for_projection.shape[1] * len(np.unique(y)):
+                                transformer = sklearn.pipeline.Pipeline([("pca", sklearn.decomposition.PCA()), ("lda", lda)])
+                                transformer.fit(X_for_projection, y)
+                                print("Reducing with PCA")
+                            else:
+                                lda.fit(X_for_projection, y)
+                                transformer = lda
+                            
+                            X_projected = transformer.transform(X_for_projection)
+                            datasets.append((X_projected, transformer, f"LDA class projection", None))
                     
                     else:
                     
+                        lda.fit(X_for_projection, y)
                         accepted_labels = [self.labels[l] for l in label_order[-self.max_number_of_components_to_consider:] if self.labels[l] in y]
                         for label, direction in zip(lda.classes_, lda.coef_):
                             if label not in accepted_labels:
@@ -198,6 +206,7 @@ class DecisionTreeClassifier:
         
         #print(f"Now considering {len(datasets)} datasets")
         att_cnt = 0
+        print(len(datasets))
         for ds_index, (X_local, transformation, trans_name, offsets) in enumerate(datasets):
             
             # plot dataset
@@ -503,7 +512,7 @@ class DecisionTreeClassifier:
     
 class RandomForest:
     
-    def __init__(self, n_trees = 100, pi = 0.9, eta = 5, p = None, enable_pca_projections = False, enable_lda_projections = False, lda_on_canonical_projection = False, pca_classes = 2, allow_global_projection = True, project_before_select = False, max_number_of_components_to_consider = None, enforce_projections = False, light_weight_split_point = False, granularity = 10, beam = None, rs = None):
+    def __init__(self, n_trees = 100, pi = 0.9, eta = 5, p = None, enable_pca_projections = False, enable_lda_projections = False, lda_on_canonical_projection = False, pca_classes = 2, allow_global_projection = True, project_before_select = False, max_number_of_components_to_consider = None, enforce_projections = False, light_weight_split_point = False, granularity = 10, beam = None, adjust_lda_via_pca = False, rs = None):
         self.n_trees = n_trees
         self.pi = pi
         self.eta = eta
@@ -520,6 +529,7 @@ class RandomForest:
         self.light_weight_split_point = light_weight_split_point
         self.granularity = granularity
         self.beam = beam
+        self.adjust_lda_via_pca = adjust_lda_via_pca
     
     def train(self, X, y):
         self.labels = list(np.unique(y))
@@ -530,7 +540,7 @@ class RandomForest:
             indices = self.rs.choice(num_instances, num_instances)
             Xi = np.array([X[j] for j in indices])
             yi = np.array([y[j] for j in indices])
-            dt = DecisionTreeClassifier(pi = self.pi, eta = self.eta, p = p, enable_pca_projections = self.enable_pca_projections, enable_lda_projections = self.enable_lda_projections, lda_on_canonical_projection = self.lda_on_canonical_projection, rs = self.rs, project_before_select = self.project_before_select, allow_global_projection = self.allow_global_projection, pca_classes = self.pca_classes, max_number_of_components_to_consider = self.max_number_of_components_to_consider, enforce_projections = self.enforce_projections, light_weight_split_point = self.light_weight_split_point, granularity = self.granularity, beam = self.beam)
+            dt = DecisionTreeClassifier(pi = self.pi, eta = self.eta, p = p, enable_pca_projections = self.enable_pca_projections, enable_lda_projections = self.enable_lda_projections, lda_on_canonical_projection = self.lda_on_canonical_projection, rs = self.rs, project_before_select = self.project_before_select, allow_global_projection = self.allow_global_projection, pca_classes = self.pca_classes, max_number_of_components_to_consider = self.max_number_of_components_to_consider, enforce_projections = self.enforce_projections, light_weight_split_point = self.light_weight_split_point, granularity = self.granularity, beam = self.beam, adjust_lda_via_pca = self.adjust_lda_via_pca)
             dt.train(Xi, yi)
             self.trees.append(dt)
     

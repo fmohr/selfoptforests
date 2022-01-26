@@ -17,12 +17,12 @@ from rotationforest import RandomForest
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset_id', type=int, required=True)
-    parser.add_argument('--algorithm', type=str, choices=['randomforest', 'rotationforest', 'ldaforest', 'ldaforest-b10', 'ldaforest-c10', 'ldaforest-c20', 'pcaforest', 'zhangpcaforest', 'zhangldaforest', 'wangpcaforest'], required=True)
+    parser.add_argument('--algorithm', type=str, choices=['randomforest', 'rotationforest', 'ldaforest-b10', 'ldaforest-c10', 'ldaforest-c10-andpca', 'ldaforest-c20', 'pcaforest', 'zhangpcaforest', 'zhangldaforest', 'wangpcaforest', 'ensembleforest', 'ensembleforest-c10', 'ensembleforest-b10'], required=True)
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--folder', type=str, default='./tmp/')
     return parser.parse_args()
 
-def get_learner(args):
+def get_learner(args, X):
     num_trees = 100
     learner_name = args.algorithm
     if learner_name == "randomforest":
@@ -35,10 +35,18 @@ def get_learner(args):
         return RandomForest(n_trees = num_trees, enable_pca_projections = False, enable_lda_projections = True, lda_on_canonical_projection = True, project_before_select = False, allow_global_projection = False, enforce_projections = True, max_number_of_components_to_consider = 5, light_weight_split_point = True, granularity = 10, beam = 1, rs = np.random.RandomState(args.seed))
     if learner_name == "ldaforest-c10":
         return RandomForest(n_trees = num_trees, enable_pca_projections = False, enable_lda_projections = True, lda_on_canonical_projection = True, project_before_select = False, allow_global_projection = False, enforce_projections = True, max_number_of_components_to_consider = 5, light_weight_split_point = True, granularity = 10, rs = np.random.RandomState(args.seed))
+    if learner_name == "ldaforest-c10-andpca":
+        return RandomForest(n_trees = num_trees, enable_pca_projections = False, enable_lda_projections = True, lda_on_canonical_projection = True, adjust_lda_via_pca = True, project_before_select = False, allow_global_projection = False, enforce_projections = True, max_number_of_components_to_consider = 5, light_weight_split_point = True, granularity = 10, rs = np.random.RandomState(args.seed))
     if learner_name == "ldaforest-c20":
         return RandomForest(n_trees = num_trees, enable_pca_projections = False, enable_lda_projections = True, lda_on_canonical_projection = True, project_before_select = False, allow_global_projection = False, enforce_projections = True, max_number_of_components_to_consider = 5, light_weight_split_point = True, granularity = 20, rs = np.random.RandomState(args.seed))
     if learner_name == "zhangldaforest":
         return RandomForest(n_trees = num_trees, enable_pca_projections = False, enable_lda_projections = True, lda_on_canonical_projection = True, project_before_select = False, allow_global_projection = False, enforce_projections = True, max_number_of_components_to_consider = None, light_weight_split_point = False, rs = np.random.RandomState(args.seed))
+    if learner_name == "ensembleforest":
+        return RandomForest(n_trees = num_trees, enable_pca_projections = True, enable_lda_projections = True, lda_on_canonical_projection = True, project_before_select = False, allow_global_projection = True, enforce_projections = False, max_number_of_components_to_consider = int(np.sqrt(X.shape[1])), light_weight_split_point = False, rs = np.random.RandomState(args.seed))
+    if learner_name == "ensembleforest-c10":
+        return RandomForest(n_trees = num_trees, enable_pca_projections = True, enable_lda_projections = True, lda_on_canonical_projection = True, project_before_select = False, allow_global_projection = True, enforce_projections = False, max_number_of_components_to_consider = int(np.sqrt(X.shape[1])), light_weight_split_point = True, granularity = 10, rs = np.random.RandomState(args.seed))
+    if learner_name == "ensembleforest-b10":
+        return RandomForest(n_trees = num_trees, enable_pca_projections = True, enable_lda_projections = True, lda_on_canonical_projection = True, project_before_select = False, allow_global_projection = True, enforce_projections = False, max_number_of_components_to_consider = int(np.sqrt(X.shape[1])), light_weight_split_point = True, granularity = 10, beam = 1, rs = np.random.RandomState(args.seed))
     if learner_name == "zhangpcaforest":
         return RandomForest(n_trees = num_trees, enable_pca_projections = True, enable_lda_projections = False, project_before_select = False, allow_global_projection = True, pca_classes = 0, max_number_of_components_to_consider = None, light_weight_split_point = False, rs = np.random.RandomState(args.seed))
     if learner_name == "wangpcaforest":
@@ -85,7 +93,7 @@ if __name__ == '__main__':
     labels = list(pd.unique(y))
     
     # train model
-    learner = get_learner(args)
+    learner = get_learner(args, X_train)
     time_train_start = time.time()
     learner.train(X_train, y_train)
     time_train_end = time.time()
