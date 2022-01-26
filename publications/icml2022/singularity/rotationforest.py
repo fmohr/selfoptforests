@@ -206,7 +206,6 @@ class DecisionTreeClassifier:
         
         #print(f"Now considering {len(datasets)} datasets")
         att_cnt = 0
-        print(len(datasets))
         for ds_index, (X_local, transformation, trans_name, offsets) in enumerate(datasets):
             
             # plot dataset
@@ -216,7 +215,7 @@ class DecisionTreeClassifier:
             
             # if attributes were NOT selected BEFORE projection, select them now
             indices_of_possible_split_attributes = list(range(min(X_local.shape[1], self.max_number_of_components_to_consider)))
-            if self.project_before_select:
+            if transformation is None or self.project_before_select:
                 if self.p is not None:
                     num_new_features = min(len(indices_of_possible_split_attributes), int(self.p))
                     indices_of_possible_split_attributes = sorted(self.rs.choice(indices_of_possible_split_attributes, num_new_features, replace=False))
@@ -478,31 +477,38 @@ class DecisionTreeClassifier:
     def gain(self, wY, wN, pY, pN):
         return -(wY * entropy(pY) + wN * entropy(pN))
     
-    def pass_instance_from_node_to_leaf(self, x, node):
+    def predict_recursively(self, X, node):
+        
+        if X.shape[0] == 0:
+            return []
+        
+        # get predictions in leaf
         if node.split_point is None:
-            return node
+            return X.shape[0] * [node.label]
+        
+        # get split point of node
         att, v = node.split_point
+        
+        # project data correspondingly and compute mask of those points going to the left
         if node.is_numeric:
             if node.transformer is None:
-                val1 = x[att]
+                X_projected = X[:,att]
             else:
-                x_transformed = node.transformer.transform([x[node.indices_of_attributes_to_project_over]])[0]
-                #print(x_transformed)
-                val1 = x_transformed[att]
-            #val2 = x[att] if node.transformation_vector is None else np.dot(node.transformation_vector, x)
-            #print(val1, val2)
-            val = val1
-            chosen_child = node.lc if val <= v else node.rc
+                X_transformed = node.transformer.transform(X[:,node.indices_of_attributes_to_project_over])
+                X_projected = X_transformed[:,att]
+            mask  = X_projected <= v
         else:
-            chosen_child = node.lc if x[att] == v else node.rc
-        return self.pass_instance_from_node_to_leaf(x, chosen_child)
+            mask = X[att] == v
+        
+        # get predictions of points going to left
+        predictions = np.empty(X.shape[0], object)
+        predictions[mask] = self.predict_recursively(X[mask], node.lc)
+        predictions[~mask] = self.predict_recursively(X[~mask], node.rc)
+        return predictions
     
     def predict(self, X):
-        y = []
         X_scaled = X if self.scaler is None else self.scaler.transform(X)
-        for x in X_scaled:
-            y.append(self.pass_instance_from_node_to_leaf(x, self.model).label)
-        return y
+        return self.predict_recursively(X_scaled, self.model)
     
     def get_depth(self):
         return self.model.get_depth()

@@ -17,7 +17,7 @@ from rotationforest import RandomForest
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset_id', type=int, required=True)
-    parser.add_argument('--algorithm', type=str, choices=['randomforest', 'rotationforest', 'ldaforest-b10', 'ldaforest-c10', 'ldaforest-c10-andpca', 'ldaforest-c20', 'pcaforest', 'zhangpcaforest', 'zhangldaforest', 'wangpcaforest', 'ensembleforest', 'ensembleforest-c10', 'ensembleforest-b10'], required=True)
+    parser.add_argument('--algorithm', type=str, choices=['randomforest', 'fastrandomforest', 'rotationforest', 'ldaforest-b10', 'ldaforest-c10', 'ldaforest-c10-andpca', 'ldaforest-c20', 'pcaforest', 'zhangpcaforest', 'zhangldaforest', 'wangpcaforest', 'ensembleforest', 'ensembleforest-c10', 'ensembleforest-b10'], required=True)
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--folder', type=str, default='./tmp/')
     return parser.parse_args()
@@ -27,6 +27,8 @@ def get_learner(args, X):
     learner_name = args.algorithm
     if learner_name == "randomforest":
         return RandomForest(n_trees = num_trees, enable_pca_projections = False, enable_lda_projections = False, rs = np.random.RandomState(args.seed))
+    if learner_name == "fastrandomforest":
+        return RandomForest(n_trees = num_trees, enable_pca_projections = False, enable_lda_projections = False, light_weight_split_point = True, granularity = 8, rs = np.random.RandomState(args.seed))
     if learner_name == "pcaforest":
         return RandomForest(n_trees = num_trees, enable_pca_projections = True, enable_lda_projections = False, project_before_select = True, allow_global_projection = True, pca_classes = 0, max_number_of_components_to_consider = None, light_weight_split_point = True, rs = np.random.RandomState(args.seed))
     if learner_name == "ldaforest":
