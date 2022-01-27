@@ -127,7 +127,7 @@ class DecisionTreeClassifier:
         else:
             indices_of_attributes_to_project_over = list(range(X.shape[1]))
             if self.p is not None:
-                num_new_features = min(X.shape[1], max(2, int(self.p)), self.max_number_of_components_to_consider)
+                num_new_features = min(X.shape[1], max(2, int(self.p)))
                 indices_of_attributes_to_project_over = sorted(self.rs.choice(indices_of_attributes_to_project_over, num_new_features, replace=False))
         X_for_projection = X[:,indices_of_attributes_to_project_over]
         
@@ -136,6 +136,8 @@ class DecisionTreeClassifier:
         datasets = []
         if not self.enforce_projections:
             datasets.append((X, None, "None", None))
+            
+            
         if self.rotation and X.shape[0] > self.min_instances_for_rotation:
             
             # lda projections
@@ -148,12 +150,12 @@ class DecisionTreeClassifier:
                             if self.adjust_lda_via_pca and X_for_projection.shape[0] < X_for_projection.shape[1] * len(np.unique(y)):
                                 transformer = sklearn.pipeline.Pipeline([("pca", sklearn.decomposition.PCA()), ("lda", lda)])
                                 transformer.fit(X_for_projection, y)
-                                print("Reducing with PCA")
                             else:
                                 lda.fit(X_for_projection, y)
                                 transformer = lda
                             
                             X_projected = transformer.transform(X_for_projection)
+                            #print(X_projected[:5])
                             datasets.append((X_projected, transformer, f"LDA class projection", None))
                     
                     else:
@@ -208,6 +210,7 @@ class DecisionTreeClassifier:
         att_cnt = 0
         for ds_index, (X_local, transformation, trans_name, offsets) in enumerate(datasets):
             
+            #print(f"DS {ds_index}")
             # plot dataset
             #fig, ax = plot_dataset(X_local, y)
             #ax.set_title(trans_name)
@@ -221,7 +224,8 @@ class DecisionTreeClassifier:
                     indices_of_possible_split_attributes = sorted(self.rs.choice(indices_of_possible_split_attributes, num_new_features, replace=False))
             
             # get the split decision
-            for att_index in indices_of_possible_split_attributes:
+            best_it_index = -1
+            for it_index, att_index in enumerate(indices_of_possible_split_attributes):
                 att_cnt += 1
                 col = X_local[:, att_index]
                 numeric_split = col.dtype in [float, int]
@@ -234,13 +238,19 @@ class DecisionTreeClassifier:
                     v, score = self.evaluate_numeric_attribute(col, y, best_score, min_offset = offset_min, max_offset = offset_max)
                 else:
                     v, score = self.evaluate_categorical_attribute(col, y)
+                
+                #print(f"\t{score}")
+                
                 if v is not None and score > best_score:
                     split_point, best_score = (att_index, v), score
                     best_is_numeric_split = numeric_split
                     X_decision = X_local
                     transformation_for_decision = transformation
+                    best_it_index = it_index
                 time_att_eval_end = time.time()
                 self.time_splitpoints += (time_att_eval_end - time_att_eval_start)
+            
+            #print(f"Found best split in it {best_it_index}")
             
             # break if the standard split was already good enough
             if ds_index == 0 and best_score >= - self.min_score_to_not_rotate:
@@ -518,7 +528,7 @@ class DecisionTreeClassifier:
     
 class RandomForest:
     
-    def __init__(self, n_trees = 100, pi = 0.9, eta = 5, p = None, enable_pca_projections = False, enable_lda_projections = False, lda_on_canonical_projection = False, pca_classes = 2, allow_global_projection = True, project_before_select = False, max_number_of_components_to_consider = None, enforce_projections = False, light_weight_split_point = False, granularity = 10, beam = None, adjust_lda_via_pca = False, rs = None):
+    def __init__(self, n_trees = 100, pi = 0.9, eta = 5, p = None, enable_pca_projections = False, enable_lda_projections = False, lda_on_canonical_projection = False, pca_classes = 2, allow_global_projection = True, project_before_select = False, max_number_of_components_to_consider = None, enforce_projections = False, light_weight_split_point = False, granularity = 10, beam = None, adjust_lda_via_pca = False, timeout = None, rs = None):
         self.n_trees = n_trees
         self.pi = pi
         self.eta = eta
@@ -536,13 +546,19 @@ class RandomForest:
         self.granularity = granularity
         self.beam = beam
         self.adjust_lda_via_pca = adjust_lda_via_pca
+        self.timeout = timeout
     
     def train(self, X, y):
+        deadline = None if self.timeout is None else time.time() + self.timeout
         self.labels = list(np.unique(y))
         self.trees = []
         num_instances = X.shape[0]
         p = np.sqrt(X.shape[1]) if self.p is None else self.p
         for i in tqdm(range(self.n_trees)):
+            if time.time() >= deadline:
+                print("TIMEOUT, STOPPING!")
+                break
+                
             indices = self.rs.choice(num_instances, num_instances)
             Xi = np.array([X[j] for j in indices])
             yi = np.array([y[j] for j in indices])
