@@ -31,10 +31,10 @@ task sourcesJar(type: Jar, dependsOn: classes) {
 
 task evalcli(type: Jar) {
     manifest {
-		attributes 'Main-Class': 'pcaforests.PCAForestExperimentRunner'
+		attributes 'Main-Class': 'selfoptforests.SelfOptForestExperimentRunner'
     }
     zip64 = true
-    baseName = 'pcaforest-evalcli'
+    baseName = 'selfoptforest-evalcli'
     from { configurations.compile.collect { it.isDirectory() ? it : zipTree(it) } }
     exclude 'META-INF/*.RSA', 'META-INF/*.SF', 'META-INF/*.DSA'
     with jar
