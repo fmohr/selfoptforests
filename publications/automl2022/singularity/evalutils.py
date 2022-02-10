@@ -146,7 +146,7 @@ def get_performance_of_ensemble(votes_scheme, nums, labels, y_valid, y_test):
     votes_valid, votes_test = get_votes_of_ensemble(votes_scheme, nums)
     y_hat_valid = [labels[l] for l in np.argmax(votes_valid, axis=1)]
     y_hat_test = [labels[l] for l in np.argmax(votes_test, axis=1)]
-    return tuple([sklearn.metrics.accuracy_score(y, y_hat) for y, y_hat in zip([y_valid, y_test], [y_hat_valid, y_hat_test])])
+    return tuple([np.round(sklearn.metrics.accuracy_score(y, y_hat), 4) for y, y_hat in zip([y_valid, y_test], [y_hat_valid, y_hat_test])])
 
 def get_all_combos_for_sum(s, step_size = 1):
     combos = []
