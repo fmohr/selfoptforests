@@ -83,12 +83,19 @@ def get_votes_of_tree(dt, X_valid, X_test, labels):
         votes[1][i,labels.index(prediction)] = 1
     return votes[0], votes[1]
 
+
+'''
+    This computes a tuple (votes_valid, votes_test).
+    - votes_valid are the votes the forest puts on the classes for the different instances used during *training*
+    - votes_test are the votes the forest puts on the classes for the instances given in X_test
+'''
 def get_cummulative_votes(rf, X_test, check = True):
     votes_valid = [np.zeros((rf.X.shape[0], len(rf.labels)))]
     votes_test = [np.zeros((X_test.shape[0], len(rf.labels)))]
     
     for i, dt in enumerate(rf.trees):
-        indices_valid = sorted(np.unique(rf.indices_per_tree[i]))
+        indices_train = sorted(np.unique(rf.indices_per_tree[i]))
+        indices_valid = [j for j in range(rf.X.shape[0]) if not j in indices_train]
         X_valid = rf.X[indices_valid]
         votes_valid_new = votes_valid[-1].copy()
         votes_test_new = votes_test[-1].copy()

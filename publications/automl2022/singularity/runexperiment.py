@@ -54,7 +54,7 @@ if __name__ == '__main__':
     os.makedirs(folder, exist_ok=True)
     
     # compute results
-    results = get_results_of_mixed_trees(args.dataset_id, 1, 200)
+    results = get_results_of_mixed_trees(args.dataset_id, args.seed, 200)
     
     # store results
     logger.info(f"Ready, now writing results.")
