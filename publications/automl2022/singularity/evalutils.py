@@ -168,14 +168,17 @@ def get_results_of_mixed_trees(openmlid, seed, max_num_trees):
     X_train, X_test, y_train, y_test = sklearn.model_selection.train_test_split(X, y, random_state = np.random.RandomState(seed))
 
     # create random forests
-    rf1 = RandomForest(n_trees = max_num_trees, enable_lda_projections = False, enable_pca_projections = False, light_weight_split_point = True, granularity = 10, rs = np.random.RandomState(seed))
+    rf1 = RandomForest(n_trees = max_num_trees, enable_lda_projections = False, enable_pca_projections = False, light_weight_split_point = False, rs = np.random.RandomState(seed))
     rf2 = RandomForest(n_trees = max_num_trees, enforce_projections = True, enable_lda_projections = True, enable_pca_projections = False, lda_on_canonical_projection = True, light_weight_split_point = False, rs = np.random.RandomState(seed))
     rf3 = RandomForest(n_trees = max_num_trees, enforce_projections = True, enable_lda_projections = False, enable_pca_projections = True, pca_classes = 0, light_weight_split_point = False, rs = np.random.RandomState(seed))
-    for rf in [rf1, rf2, rf3]:
+    for name, rf in zip(["standard RF", "LDA RF", "PCA RF"], [rf1, rf2, rf3]):
+        print(f"Training {name}")
         rf.train(X_train, y_train)
-        
+    
     # get votes of the trees in the ensembles
+    print("Ready, computing votes")
     votes = [get_cummulative_votes(rf, X_test) for rf in [rf1, rf2, rf3]]
+    print("Votes ready, computing scores.")
     
     # compute scores for all possible partial and mixed ensembles
     scores = {}
@@ -186,4 +189,4 @@ def get_results_of_mixed_trees(openmlid, seed, max_num_trees):
             scores_for_size.append(get_performance_of_ensemble(votes, c, rf1.labels, y_train, y_test))
         scores[n_trees] = (points, scores_for_size)
         
-    return scores
+    return {"scores": scores, "times": [list(np.round(rf.get_train_times(), 4)) for rf in [rf1, rf2, rf3]]}

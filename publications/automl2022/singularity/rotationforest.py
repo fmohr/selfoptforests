@@ -17,7 +17,11 @@ def plot_dataset(X, y):
     return fig, ax
 
 def entropy(p):
-    return -sum([q * np.log(q) / np.log(2) if q > 0 else 0 for q in p])
+    
+    if len(p.shape) == 1:
+        return entropy(np.array([list(p)]))
+    
+    return np.maximum(0, -np.sum((p * np.log2(p, out=np.zeros_like(p), where=(p!=0))), axis=1))
 
 class Node:
     def __init__(self):
@@ -94,6 +98,8 @@ class DecisionTreeClassifier:
         self.train_time = time.time() - time_start
     
     def train_tree(self, X, y):
+        
+        t_start = time.time()
         
         # preliminaries (lines 1-3)
         n = X.shape[0]
@@ -225,6 +231,7 @@ class DecisionTreeClassifier:
             
             # get the split decision
             best_it_index = -1
+            t0 = time.time()
             for it_index, att_index in enumerate(indices_of_possible_split_attributes):
                 att_cnt += 1
                 col = X_local[:, att_index]
@@ -250,7 +257,7 @@ class DecisionTreeClassifier:
                 time_att_eval_end = time.time()
                 self.time_splitpoints += (time_att_eval_end - time_att_eval_start)
             
-            #print(f"Found best split in it {best_it_index}")
+            #print(f"Found best split in it {best_it_index}. Time to compute: {time.time () - t0}")
             
             # break if the standard split was already good enough
             if ds_index == 0 and best_score >= - self.min_score_to_not_rotate:
@@ -276,6 +283,7 @@ class DecisionTreeClassifier:
             #projection_matrix = np.matmul(transformation_for_decision.components_, transformation_for_decision.components_.T)
             #node.transformation_vector = transformation_for_decision.components_[split_point[0]]
             node.transformer = transformation_for_decision
+        #print(f"Finished everything up to recursion within {time.time() - t_start}")
         node.is_numeric = best_is_numeric_split
         node.lc = self.train_tree(X[mask], y[mask])
         node.rc = self.train_tree(X[~mask], y[~mask])
@@ -285,10 +293,12 @@ class DecisionTreeClassifier:
         
         indices = np.argsort(col)
         M = []
+        n = len(col)
         ni = np.zeros(len(self.labels))
         
-        # idfentify all possible split points
-        Nvi = {}
+        # idfentify all possible split points. Nvi will have at index i the counts for the i-th value v in M
+        Nvi = []
+        t0 = time.time()
         for k, j in enumerate(indices):
             xj = col[j]
             
@@ -304,9 +314,11 @@ class DecisionTreeClassifier:
                 if xj != xjp1:
                     v = (xj + xjp1) / 2
                     M.append(v)
-                    Nvi[v] = ni.copy()
+                    Nvi.append(ni.copy())
+        Nvi = np.array(Nvi)
+        t1 = time.time()
         
-        #print(f"Considering {np.round(len(M) / (len(col) - 1), 2)}% of the possible split points.")
+        #print(f"Computed {len(M)} possible split points. This took {t1 - t0}s. Considering {np.round(len(M) / (len(col) - 1), 2)}% of the possible split points.")
         
         # if there are no split points, return -np.inf
         if not M:
@@ -316,17 +328,22 @@ class DecisionTreeClassifier:
         best_v, best_score = None, -np.inf
         
         def get_score_of_point(v):
-                nY = sum(Nvi[v])
-                n = len(col)
-                nN = n - nY
-                wY = nY / n
-                wN = nN / n
-                pY = np.array(Nvi[v]) / nY
-                pN = (ni - np.array(Nvi[v]))
-                pnSum = sum(pN)
-                if pnSum > 0:
-                    pN /= pnSum
-                return self.gain(wY, wN, pY, pN)
+            
+            # determine counts per class in left and right fold
+            i_v = M.index(v)
+            nY_per_class = Nvi[i_v]
+            nN_per_class = ni - nY_per_class
+            
+            # compute figures
+            nY = sum(nY_per_class)
+            nN = n - nY
+            pY = nY_per_class / nY
+            if nN > 0:
+                pN = nN_per_class / nN
+            wY = nY / n
+            wN = 1 - wY
+            
+            return self.gain(wY, wN, pY, pN)
             
         def get_best_in_bin(points, num_splits):
             if len(points) < num_splits:
@@ -434,15 +451,29 @@ class DecisionTreeClassifier:
                 return best_v, best_score
         
         else:
-            scores = []
+            
             time_start_full = time.time()
-            for v in M:
-                score = get_score_of_point(v)
-                scores.append(score)
-                if score > best_score:
-                    best_v, best_score = v, score
+            
+            # compute entropies
+            n_Y_per_class = Nvi
+            n_N_per_class = ni - Nvi
+            n_Y = np.sum(n_Y_per_class, axis=1).reshape(n_Y_per_class.shape[0], 1)
+            n_N = np.sum(n_N_per_class, axis=1).reshape(n_N_per_class.shape[0], 1)
+            p_Y = n_Y_per_class / n_Y
+            p_N = n_N_per_class / n_N
+            e_Y = entropy(p_Y)
+            e_N = entropy(p_N)
+            
+            # compute gains
+            gains = -(n_Y.reshape(len(n_Y)) * e_Y + n_N.reshape(len(n_N)) * e_N) / n
+            
+            # get best split
+            best_index = np.argmax(gains)
+            best_v, best_score = M[best_index], gains[best_index]
             time_end_full = time.time()
             
+            t2 = time.time()
+            #print(f"Best split point computed for attribute. This took {t2-t1}s.")
             if False:
                 
                 #print(f"Plotting results. Best val {best_v} with score {best_score} and best solution found within {num_evals} iterations. Best BO solutions: {optimizer.max}. Gap of BO solution: {np.round(np.abs(best_score - optimizer.max['target']), 3)}. Full runtime: {np.round(time_end_bo - time_start_bo, 2)}, BO runtime: {np.round(time_end_bo - time_start_bo, 3)}, Full search runtime: {np.round(time_end_full - time_start_full, 3)}. Runtime light: {np.round(time_end_light - time_start_light, 3)}. Gap light: {np.round(np.abs(best_score - best_mega_greedy_score), 3)}")
@@ -519,6 +550,9 @@ class DecisionTreeClassifier:
     def predict(self, X):
         X_scaled = X if self.scaler is None else self.scaler.transform(X)
         return self.predict_recursively(X_scaled, self.model)
+    
+    def get_train_time(self):
+        return self.train_time
     
     def get_depth(self):
         return self.model.get_depth()
@@ -621,3 +655,6 @@ class RandomForest:
     
     def get_numbers_of_nodes(self):
         return [t.get_number_of_nodes() for t in self.trees]
+    
+    def get_train_times(self):
+        return [t.get_train_time() for t in self.trees]
