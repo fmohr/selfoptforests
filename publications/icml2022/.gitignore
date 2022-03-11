@@ -1,7 +1,0 @@
-bin
-build
-logs
-.gradle
-.classpath
-.project
-.settings
