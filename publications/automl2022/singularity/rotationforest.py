@@ -626,7 +626,7 @@ class RandomForest:
             predictions.append(prediction)
         return predictions
     
-    def get_oob_error(self):
+    def get_oob_accuracy(self):
         
         # collect votes
         labels = list(np.unique(self.y))
