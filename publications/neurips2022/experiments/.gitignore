@@ -1,0 +1,4 @@
+.project
+.classpath
+conf/database.conf
+conf/database-local.conf
